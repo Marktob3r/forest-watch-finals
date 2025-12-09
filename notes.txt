@@ -1,0 +1,35 @@
+Project Summary
+- next (v.16)
+- react (v.19)
+- Radix UI
+- Lucide Icons
+- Recharts
+- Sonner
+
+====November 12, 2025====
+
+broken components:
+
+Navigation.tsx
+    loc: components/Navigation.tsx 
+    Status: FIXED
+
+calendar.tsx
+    loc: components/ui/calendar.tsx
+    Status: FIXED
+
+chart.tsx
+    loc: components/ui/chart.tsx
+    Status: FIXED
+
+- New UI now working.
+
+
+
+nginx commands
+
+start nginx 
+"nginx start"
+
+stop nginx
+""
