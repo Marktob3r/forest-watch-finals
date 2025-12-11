@@ -38,6 +38,7 @@ export function Dashboard() {
             recentAlerts: Array.isArray(json.recentAlerts) ? json.recentAlerts : [],
             stats: json.stats || {},
             environmental: json.environmental || {},
+            aiStats: json.aiStats ?? null,
             aiInsights: json.aiInsights ?? null,
             aiRaw: json.aiRaw ?? null,
             aiError: json.aiError ?? null,
@@ -86,7 +87,13 @@ export function Dashboard() {
           <div className="flex items-start justify-between">
             <div>
               <p className="text-muted-foreground mb-1">Forest Coverage</p>
-              <h2 className="text-primary">{loading ? '—' : (data?.stats?.forestCoverage ?? '—')}</h2>
+              <h2 className="text-primary">{
+                loading ? '—' : (
+                  data?.aiStats ? (
+                    (Number(data.aiStats.totalAreaPlanted || 0)).toLocaleString() + '/' + (Number(data.aiStats.totalAreaTarget || 0)).toLocaleString() + ' ha'
+                  ) : (data?.stats?.forestCoverage ?? '—')
+                )
+              }</h2>
               <div className="flex items-center gap-1 mt-2 text-destructive">
                 <TrendingDown className="w-4 h-4" />
                 <span className="text-sm">{loading ? '—' : (data?.stats?.coverageChange ?? '-')}</span>
@@ -117,7 +124,7 @@ export function Dashboard() {
           <div className="flex items-start justify-between">
             <div>
               <p className="text-muted-foreground mb-1">Reforestation Progress</p>
-              <h2 className="text-primary">{loading ? '—' : (data?.stats?.reforestationHectares ?? '—')}</h2>
+              <h2 className="text-primary">{loading ? '—' : (data?.aiStats ? (Number(data.aiStats.totalAreaPlanted ?? 0).toLocaleString() + ' ha') : (data?.stats?.reforestationHectares ?? '—'))}</h2>
               <div className="flex items-center gap-1 mt-2 text-primary">
                 <TrendingUp className="w-4 h-4" />
                 <span className="text-sm">{loading ? '—' : (data?.stats?.reforestationDelta ?? '')}</span>
@@ -133,7 +140,7 @@ export function Dashboard() {
           <div className="flex items-start justify-between">
             <div>
               <p className="text-muted-foreground mb-1">Carbon Sequestered</p>
-              <h2 className="text-primary">{loading ? '—' : (data?.stats?.carbon ?? '—')}</h2>
+              <h2 className="text-primary">{loading ? '—' : (data?.aiStats ? (Math.round((Number(data.aiStats.totalTreesPlanted || 0) * 0.05) * 10) / 10 + ' t') : (data?.stats?.carbon ?? '—'))}</h2>
               <div className="flex items-center gap-1 mt-2 text-primary">
                 <TrendingUp className="w-4 h-4" />
                 <span className="text-sm">{loading ? '—' : (data?.stats?.carbonDelta ?? '')}</span>

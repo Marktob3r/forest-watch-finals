@@ -69,16 +69,24 @@ export async function GET() {
       carbon: totalTreesPlanted ? `${Math.round(totalTreesPlanted * 0.05 * 10) / 10} t` : null,
     } as any;
 
-    // Prepare a short prompt for the AI to give insights. Keep it limited
-    // and structured so that the model focuses on the three requested areas.
-    const prompt = `You are an environmental analyst. Given the following aggregated statistics, provide a concise insight paragraph about: 1) forest coverage (progress vs targets), 2) land use distribution implications, and 3) environmental conditions (NDVI/soil moisture/temperature).\n\nStatistics:\n- totalAreaTarget: ${totalAreaTarget}\n- totalAreaPlanted: ${totalAreaPlanted}\n- totalTreesTarget: ${totalTreesTarget}\n- totalTreesPlanted: ${totalTreesPlanted}\n- activeAlerts: ${activeAlerts}\n- avg_ndvi: ${env.ndvi ?? 'N/A'}\n- avg_soil_moisture: ${env.soilMoisture ?? 'N/A'}\n- avg_temperature: ${env.temperature ?? 'N/A'}\n- avg_humidity: ${env.humidity ?? 'N/A'}\n\nProvide a short (2-4 sentence) insight for each of the three areas and label them clearly as 'Forest Coverage:', 'Land Use:', and 'Environmental:'.`;
+    // Retrieve a short list of projects to include in the AI prompt (name + numeric fields)
+    const { data: projectList } = await supabase
+      .from('projects')
+      .select('id,name,country,area_target,area_planted,progress')
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    const projectSummary = (projectList || []).map((p: any) => `- ${p.name || p.id} | country: ${p.country || 'N/A'} | area_target: ${p.area_target ?? 0} | area_planted: ${p.area_planted ?? 0} | progress: ${p.progress ?? 0}`).join('\n');
+
+    // Prepare a prompt that requests machine-readable JSON containing numeric
+    // analysis fields (aiStats) so the frontend can render numbers into
+    // placeholders reliably.
+    const prompt = `You are an environmental data analyst. Given the aggregated statistics and the recent project list below, produce a JSON object with two top-level keys: "aiStats" and "insights".\n\nRequirements for aiStats (numbers):\n- totalAreaTarget (number, hectares)\n- totalAreaPlanted (number, hectares)\n- percentComplete (number, 0-100)\n- totalTreesPlanted (number)\n- activeAlerts (number)\n- topProjects: array of up to 3 objects { id, name, progress (0-100), areaPlanted }\n- landUseDistribution: array of { name, percent } (sum to ~100)\n\nRequirements for insights: a short human-readable paragraph (2-4 sentences) summarizing: Forest Coverage, Land Use, Environmental Conditions and one short recommendation.\n\nAggregated statistics:\n- totalAreaTarget: ${totalAreaTarget}\n- totalAreaPlanted: ${totalAreaPlanted}\n- totalTreesTarget: ${totalTreesTarget}\n- totalTreesPlanted: ${totalTreesPlanted}\n- activeAlerts: ${activeAlerts}\n- avg_ndvi: ${env.ndvi ?? 'N/A'}\n- avg_soil_moisture: ${env.soilMoisture ?? 'N/A'}\n- avg_temperature: ${env.temperature ?? 'N/A'}\n- avg_humidity: ${env.humidity ?? 'N/A'}\n\nRecent projects:\n${projectSummary}\n\nIMPORTANT: Return ONLY valid JSON (no surrounding markdown). Ensure numeric fields are numbers, not strings. Keep arrays compact. Example valid output: {"aiStats": {"totalAreaTarget": 100, "totalAreaPlanted": 25, "percentComplete": 25, "totalTreesPlanted": 5000, "activeAlerts": 2, "topProjects": [{"id":"...","name":"...","progress":80,"areaPlanted":50}], "landUseDistribution": [{"name":"Forest","percent":70}]}, "insights": "Forest Coverage: ..." }`;
 
     let aiInsights: string | null = null;
     let aiRaw: string | null = null;
     let aiError: string | null = null;
 
-    // Try to read cached AI insights from `ai_insights` table (if present).
-    // We cache only the textual insight to avoid repeated model calls.
     const ttlSeconds = Number(process.env.AI_INSIGHTS_TTL_SECONDS || 3600);
     try {
       const cached = await supabase
@@ -102,12 +110,30 @@ export async function GET() {
     }
 
     // If not cached, call the model and persist result (best-effort).
+    let aiStats: any = null;
     if (!aiInsights) {
       try {
-        const aiText = await callGemini(prompt, 400);
+        const aiText = await callGemini(prompt, 800);
         if (aiText) {
           aiRaw = aiText;
-          aiInsights = aiText.trim();
+          // Try to parse JSON from the model output
+          try {
+            const jsonStart = aiText.indexOf('{');
+            const jsonStr = jsonStart >= 0 ? aiText.slice(jsonStart) : aiText;
+            const parsed = JSON.parse(jsonStr);
+            if (parsed && parsed.aiStats) {
+              aiStats = parsed.aiStats;
+              aiInsights = parsed.insights ?? null;
+            } else if (parsed && parsed.insights) {
+              aiInsights = parsed.insights;
+            } else {
+              // fallback: treat whole text as insights
+              aiInsights = aiText.trim();
+            }
+          } catch (pe) {
+            // parsing failed — keep raw text as insights
+            aiInsights = aiText.trim();
+          }
 
           // Best-effort: persist into `ai_insights` (table may not exist).
           try {
@@ -115,7 +141,7 @@ export async function GET() {
               key: 'dashboard_latest',
               insights: aiInsights,
               raw: aiRaw,
-              stats: stats,
+              stats: aiStats ?? stats,
               created_at: new Date().toISOString(),
             });
           } catch (e) {
@@ -133,6 +159,7 @@ export async function GET() {
     const payload = {
       ok: true,
       stats,
+      aiStats: aiStats || null,
       forestCoverageData: [],
       landUseData: [],
       recentAlerts: alerts || [],
