@@ -95,12 +95,42 @@ export async function discoverResources(query: string, types: string[] = ['artic
     unique.push(it);
   }
 
+  // If no external search results are available, first attempt to generate
+  // recommendations directly using Gemini (if the key is present). This lets
+  // developers with only an LLM key get real, model-generated recommendations.
+  if (unique.length === 0) {
+    const geminiOnly = await generateFromGeminiOnly(query);
+    if (Array.isArray(geminiOnly) && geminiOnly.length > 0) return geminiOnly;
+
+    // Fallback small built-in sample for purely offline/dev use.
+    return [
+      {
+        title: 'Reforestation Best Practices',
+        url: 'https://example.com/reforestation-best-practices',
+        snippet: 'Practical steps and case studies for successful reforestation projects.',
+        source: 'example',
+      },
+      {
+        title: 'Using NDVI for Forest Monitoring',
+        url: 'https://example.com/ndvi-forest-monitoring',
+        snippet: 'Introduction to NDVI and how to use satellite imagery for vegetation health.',
+        source: 'example',
+      },
+      {
+        title: 'Satellite Monitoring: From Space to Action',
+        url: 'https://www.youtube.com/watch?v=ysz5S6PUM-U',
+        snippet: 'A short video on detecting deforestation with satellite data.',
+        source: 'youtube',
+      },
+    ];
+  }
+
   const sampleList = unique.slice(0, 8).map((it, idx) => `${idx + 1}. ${it.title}${it.url ? ' — ' + it.url : ''}${it.snippet ? ' | ' + it.snippet : ''}`).join('\n');
   const prompt = `You are an assistant that inspects a list of online learning resources (articles, videos, guides).\n\nQuery: ${query}\n\nResources:\n${sampleList}\n\nFor each item, provide a short JSON array where each element has: title, url (if available), shortSummary (<=30 words), estimatedRating (0.0-5.0 number) and confidence (low/medium/high). Only output valid JSON.`;
 
   const geminiOutput = await callGemini(prompt);
   if (!geminiOutput) {
-    return unique.slice(0, 12);
+      return unique.slice(0, 12);
   }
 
   try {
@@ -112,3 +142,24 @@ export async function discoverResources(query: string, types: string[] = ['artic
     return unique.slice(0, 12);
   }
 }
+
+  // If no external search results and Gemini key exists, generate recommendations
+  // directly from the query so devs with only an LLM key still get real results.
+  async function generateFromGeminiOnly(query: string) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return null;
+
+    const prompt = `Generate up to 8 learning resources (articles, videos, or guides) for the query: "${query}". Return a JSON array where each element is an object with: title, url (optional), shortSummary (<=30 words), estimatedRating (0.0-5.0), confidence (low|medium|high). Only output valid JSON.`;
+    const out = await callGemini(prompt);
+    if (!out) return null;
+    try {
+      const start = out.indexOf('[');
+      const text = start >= 0 ? out.slice(start) : out;
+      const parsed = JSON.parse(text);
+      return parsed;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  export default discoverResources;

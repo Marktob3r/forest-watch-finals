@@ -34,25 +34,18 @@ export function Learn() {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
           setResults(parsed);
+          return;
         }
       }
     } catch (e) {
       // ignore
     }
-  }, []);
 
-  // Developer helper: populate sample recommendations for local testing
-  function injectSampleRecommendations() {
-    const sample = [
-      { title: 'Satellite Monitoring: From Space to Action', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', shortSummary: 'How satellites detect deforestation in near-real time', estimatedRating: 4.8 },
-      { title: 'Forest Monitoring Best Practices (PDF)', url: 'https://example.com/forest-monitoring.pdf', shortSummary: 'Complete guide to setting up forest monitoring', estimatedRating: 4.6 },
-      { title: 'AI for Deforestation Detection', url: 'https://example.com/ai-deforestation', shortSummary: 'Overview of AI methods for detecting forest loss', estimatedRating: 4.7 },
-    ];
-    try {
-      sessionStorage.setItem('fw_recommendations', JSON.stringify(sample));
-    } catch (e) {}
-    setResults(sample);
-  }
+    // If we didn't find cached recommendations, fetch a sensible default.
+    fetchRecommendations('reforestation best practices, forest monitoring, NDVI analysis');
+  }, []);
+  
+  // No local sample injection — recommendations are fetched from the server
 
   type RemoteItem = {
     title: string;
@@ -94,6 +87,33 @@ export function Learn() {
     }
   }
 
+  // Fetch recommendations programmatically (used on mount or by the search box)
+  async function fetchRecommendations(query: string) {
+    if (!query || !query.trim()) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/ai/discover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      });
+      const data = await res.json();
+      if (!data?.ok) {
+        setError(data?.error || 'No results');
+        setResults(null);
+      } else {
+        setResults(data.items || []);
+        try { sessionStorage.setItem('fw_recommendations', JSON.stringify(data.items || [])); } catch (e) {}
+      }
+    } catch (e: any) {
+      setError(e?.message || String(e));
+      setResults(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function downloadViaProxy(url?: string) {
     if (!url) return;
     try {
@@ -107,23 +127,10 @@ export function Learn() {
         throw new Error(txt || 'Failed to fetch file');
       }
       const blob = await res.blob();
-      // try to get filename from content-disposition
-      const cd = res.headers.get('content-disposition') || '';
-      let filename = 'download.pdf';
-      const m = /filename\*=UTF-8''([^;\n]+)/i.exec(cd) || /filename=\"?([^\";]+)\"?/i.exec(cd);
-      if (m && m[1]) filename = decodeURIComponent(m[1]);
-      else {
-        try {
-          const u = new URL(url);
-          const last = u.pathname.split('/').pop() || 'file';
-          filename = last.includes('.') ? last : `${last}.pdf`;
-        } catch (e) {}
-      }
-
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
-      a.download = filename;
+      a.download = '';
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -211,12 +218,7 @@ export function Learn() {
           </div>
         </div>
       )}
-      {/* Dev helper: show button to inject sample recommendations when none exist */}
-      {(!results || results.length === 0) && (
-        <div className="mt-6">
-          <Button variant="ghost" onClick={injectSampleRecommendations}>Show sample recommendations (dev)</Button>
-        </div>
-      )}
+        {/* No dev sample UI — recommendations are fetched automatically via AI */}
       <Tabs defaultValue="articles">
         <TabsList>
           <TabsTrigger value="articles" className="cursor-pointer">
