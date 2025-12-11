@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServiceSupabase } from '../../../lib/supabase';
 import callGemini from '../../../lib/ai/generate';
+import { safeGet, safeSet } from '../../../lib/redis';
 
 // Server-side dashboard endpoint. Aggregates basic stats from the database
 // and (optionally) calls the configured Gemini model to produce textual
@@ -89,20 +90,36 @@ export async function GET() {
 
     const ttlSeconds = Number(process.env.AI_INSIGHTS_TTL_SECONDS || 3600);
     try {
-      const cached = await supabase
-        .from('ai_insights')
-        .select('insights,raw,created_at')
-        .eq('key', 'dashboard_latest')
-        .limit(1)
-        .maybeSingle();
+      // Prefer Redis cache when available (fast, optional). Falls back to DB cache.
+      const r = await safeGet('dashboard_latest');
+      if (r) {
+        try {
+          const parsed = JSON.parse(r);
+          const ageSec = parsed?.ts ? (Date.now() - Number(parsed.ts)) / 1000 : 0;
+          if (ageSec >= 0 && ageSec < ttlSeconds) {
+            aiInsights = parsed.insights ?? null;
+            aiRaw = parsed.raw ?? null;
+          }
+        } catch (e) {
+          // ignore parse errors and continue
+        }
+      } else {
+        // fallback to DB-stored cache if Redis unavailable or empty
+        const cached = await supabase
+          .from('ai_insights')
+          .select('insights,raw,created_at')
+          .eq('key', 'dashboard_latest')
+          .limit(1)
+          .maybeSingle();
 
-      if (cached && !cached.error && cached.data) {
-        const row = cached.data as any;
-        const created = row.created_at ? new Date(row.created_at).getTime() : 0;
-        const ageSec = (Date.now() - created) / 1000;
-        if (ageSec >= 0 && ageSec < ttlSeconds) {
-          aiInsights = row.insights ?? null;
-          aiRaw = row.raw ?? null;
+        if (cached && !cached.error && cached.data) {
+          const row = cached.data as any;
+          const created = row.created_at ? new Date(row.created_at).getTime() : 0;
+          const ageSec = (Date.now() - created) / 1000;
+          if (ageSec >= 0 && ageSec < ttlSeconds) {
+            aiInsights = row.insights ?? null;
+            aiRaw = row.raw ?? null;
+          }
         }
       }
     } catch (e) {
@@ -144,6 +161,13 @@ export async function GET() {
               stats: aiStats ?? stats,
               created_at: new Date().toISOString(),
             });
+            // Also write a small Redis cache if available
+            try {
+              const payload = JSON.stringify({ insights: aiInsights, raw: aiRaw, stats: aiStats ?? stats, ts: Date.now() });
+              await safeSet('dashboard_latest', payload, ttlSeconds);
+            } catch (e) {
+              // ignore redis write errors
+            }
           } catch (e) {
             // ignore persistence errors
           }
